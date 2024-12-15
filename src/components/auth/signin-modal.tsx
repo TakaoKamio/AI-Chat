@@ -1,5 +1,10 @@
+tsx;
 import { useAuth } from "@/hooks/use-auth";
-import { login, register, reverifyEmail } from "@/services/dispatch/user-dispatch";
+import {
+  login,
+  register,
+  reverifyEmail,
+} from "@/services/dispatch/user-dispatch";
 import { saveSession, setItem } from "@/services/session";
 import {
   Button,
@@ -13,7 +18,7 @@ import {
   Tabs,
 } from "@nextui-org/react";
 import { useFormik } from "formik";
-import { Key, useState } from "react";
+import { Key, useState, useMemo } from "react";
 import toast from "react-hot-toast";
 import * as Yup from "yup";
 
@@ -23,171 +28,168 @@ type P = {
   onSignupSuccess: (message: string) => void;
 };
 
-export default function SigninModal({ isOpen, onClose, onSignupSuccess }: P) {
+const validationSchemas = {
+  login: Yup.object().shape({
+    email: Yup.string()
+      .email("Invalid email format")
+      .required("Email is required"),
+    password: Yup.string()
+      .min(3, "Password must be at least 3 characters long")
+      .required("Password is required"),
+  }),
+  signup: Yup.object().shape({
+    full_name: Yup.string()
+      .min(3, "Full name must be at least 3 characters long")
+      .required("Full name is required"),
+    email: Yup.string()
+      .email("Invalid email format")
+      .required("Email is required"),
+    password: Yup.string()
+      .min(3, "Password must be at least 3 characters long")
+      .required("Password is required"),
+  }),
+};
+
+const SigninModal = ({ isOpen, onClose, onSignupSuccess }: P) => {
   const [selectedKey, setSelectedKey] = useState("login");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadingState, setLoadingState] = useState({
+    loading: false,
+    error: null,
+  });
   const { setUser, setIsLoggedIn } = useAuth();
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
   const [resendingEmail, setResendingEmail] = useState(false);
-
-  const validationSchemas = {
-    login: Yup.object().shape({
-      email: Yup.string()
-        .email("Invalid email format")
-        .required("Email is required"),
-      password: Yup.string()
-        .min(3, "Password must be at least 3 characters long")
-        .required("Password is required"),
-    }),
-    signup: Yup.object().shape({
-      full_name: Yup.string()
-        .min(3, "Full name must be at least 3 characters long")
-        .required("Full name is required"),
-      email: Yup.string()
-        .email("Invalid email format")
-        .required("Email is required"),
-      password: Yup.string()
-        .min(3, "Password must be at least 3 characters long")
-        .required("Password is required"),
-    }),
-  };
-
-  const handleResendVerification = async () => {
-    if (!unverifiedEmail) return;
-    
-    setResendingEmail(true);
-    try {
-      await reverifyEmail({ email: unverifiedEmail });
-      toast.success("Verification email has been resent. Please check your inbox.");
-      setShowVerificationModal(true);
-    } catch (err) {
-      toast.error("Failed to resend verification email. Please try again.");
-    } finally {
-      setResendingEmail(false);
-    }
-  };
-
-  // Enhanced error handling function
-  const handleApiError = (err: any, context: 'login' | 'signup') => {
-    setLoading(false);
-    
-    if (!err.response) {
-      setError("Network error. Please check your connection and try again.");
-      return;
-    }
-
-    const { status, data } = err.response;
-
-    // Handle email-specific error messages
-    if (data?.email?.[0]) {
-      const emailError = data.email[0];
-      
-      // Handle verified user case
-      if (emailError.includes("already exists and is verified")) {
-        setError("This email is already registered. Please login instead.");
-        setTimeout(() => setSelectedKey("login"), 1500);
-        return;
-      }
-      
-      // Handle unverified user case
-      if (emailError.includes("already registered but not verified")) {
-        setUnverifiedEmail(formik.values.email);
-        setError("This email is registered but not verified. Click below to resend verification email.");
-        return;
-      }
-
-      // Handle any other email-specific errors
-      setError(emailError);
-      return;
-    }
-
-    switch (status) {
-      case 400:
-        if (context === 'login' && data?.detail?.includes("not found")) {
-          setError("Email not registered. Please sign up first.");
-          setTimeout(() => setSelectedKey("signup"), 1500);
-          return;
-        }
-        setError(data.message || "Please check your input and try again.");
-        break;
-      case 401:
-        setError("Incorrect email or password. Please try again.");
-        break;
-      case 422:
-        setError("Invalid input format. Please check your details.");
-        break;
-      case 429:
-        setError("Too many attempts. Please try again later.");
-        break;
-      default:
-        setError("An unexpected error occurred. Please try again later.");
-    }
-
-    console.error("API Error:", {
-      status,
-      data,
-      context,
-      error: err
-    });
-  };
 
   const formik = useFormik({
     initialValues:
       selectedKey === "login"
         ? { email: "", password: "" }
         : { full_name: "", email: "", password: "" },
-    validationSchema:
-      selectedKey === "login"
-        ? validationSchemas.login
-        : validationSchemas.signup,
+    validationSchema: validationSchemas[selectedKey],
     enableReinitialize: true,
     onSubmit: async (values) => {
-      setLoading(true);
-      setError(null);
-
+      setLoadingState({ loading: true, error: null });
       try {
+        const res =
+          selectedKey === "login"
+            ? await login(values)
+            : await register(values);
         if (selectedKey === "login") {
-          const res = await login(values);
-          if (res?.user) {
-            setUser(res.user);
-            setIsLoggedIn(true);
-            saveSession({
-              accessToken: res.access,
-              refreshToken: res.refresh,
-            });
-            setItem("user", res.user);
-            toast.success("Login successful");
-            onClose();
-          } else {
-            throw new Error("Invalid response format");
-          }
+          setUser(res.user);
+          setIsLoggedIn(true);
+          saveSession({ accessToken: res.access, refreshToken: res.refresh });
+          setItem("user", res.user);
+          toast.success("Login successful");
         } else {
-          const res = await register(values);
-          setLoading(false);
           setShowVerificationModal(true);
           onSignupSuccess("Registration successful! Please verify your email.");
-          onClose();
         }
-      } catch (err: any) {
-        handleApiError(err, selectedKey as 'login' | 'signup');
+        onClose();
+      } catch (err) {
+        handleApiError(err);
+      } finally {
+        setLoadingState({ loading: false, error: null });
       }
     },
   });
 
-  const { getFieldProps, handleSubmit, resetForm, errors, touched } = formik;
+  const handleApiError = (err: any) => {
+    const { response } = err;
+    if (!response) {
+      setLoadingState((prev) => ({
+        ...prev,
+        error: "Network error. Please check your connection and try again.",
+      }));
+      return;
+    }
+    const { status, data } = response;
+    if (data?.email?.[0]) {
+      const emailError = data.email[0];
+      if (emailError.includes("already exists and is verified")) {
+        setLoadingState((prev) => ({
+          ...prev,
+          error: "This email is already registered. Please login instead.",
+        }));
+        setTimeout(() => setSelectedKey("login"), 1500);
+      } else if (emailError.includes("already registered but not verified")) {
+        setUnverifiedEmail(formik.values.email);
+        setLoadingState((prev) => ({
+          ...prev,
+          error:
+            "This email is registered but not verified. Click below to resend verification email.",
+        }));
+      } else {
+        setLoadingState((prev) => ({ ...prev, error: emailError }));
+      }
+      return;
+    }
+    switch (status) {
+      case 400:
+        if (selectedKey === "login" && data?.detail?.includes("not found")) {
+          setLoadingState((prev) => ({
+            ...prev,
+            error: "Email not registered. Please sign up first.",
+          }));
+          setTimeout(() => setSelectedKey("signup"), 1500);
+        } else {
+          setLoadingState((prev) => ({
+            ...prev,
+            error: data.message || "Please check your input and try again.",
+          }));
+        }
+        break;
+      case 401:
+        setLoadingState((prev) => ({
+          ...prev,
+          error: "Incorrect email or password. Please try again.",
+        }));
+        break;
+      case 422:
+        setLoadingState((prev) => ({
+          ...prev,
+          error: "Invalid input format. Please check your details.",
+        }));
+        break;
+      case 429:
+        setLoadingState((prev) => ({
+          ...prev,
+          error: "Too many attempts. Please try again later.",
+        }));
+        break;
+      default:
+        setLoadingState((prev) => ({
+          ...prev,
+          error: "An unexpected error occurred. Please try again later.",
+        }));
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!unverifiedEmail) return;
+    setResendingEmail(true);
+    try {
+      await reverifyEmail({ email: unverifiedEmail });
+      toast.success(
+        "Verification email has been resent. Please check your inbox."
+      );
+      setShowVerificationModal(true);
+    } catch {
+      toast.error("Failed to resend verification email. Please try again.");
+    } finally {
+      setResendingEmail(false);
+    }
+  };
 
   const handleClose = () => {
-    resetForm();
-    setError(null);
+    formik.resetForm();
+    setLoadingState({ loading: false, error: null });
     setUnverifiedEmail(null);
     onClose();
   };
 
   return (
     <>
-      {/* Sign-in/Sign-up Modal */}
       <Modal
         isOpen={isOpen}
         onClose={handleClose}
@@ -210,33 +212,42 @@ export default function SigninModal({ isOpen, onClose, onSignupSuccess }: P) {
             </Tabs>
           </ModalHeader>
           <ModalBody>
-            <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={formik.handleSubmit}
+            >
               {selectedKey === "signup" && (
                 <Input
                   placeholder="Full Name"
                   size="lg"
-                  {...getFieldProps("full_name")}
-                  isInvalid={touched.full_name && errors.full_name ? true : false}
-                  errorMessage={errors.full_name}
+                  {...formik.getFieldProps("full_name")}
+                  isInvalid={
+                    formik.touched.full_name && Boolean(formik.errors.full_name)
+                  }
+                  errorMessage={formik.errors.full_name}
                 />
               )}
               <Input
                 placeholder="Email"
                 size="lg"
-                {...getFieldProps("email")}
-                isInvalid={touched.email && errors.email ? true : false}
-                errorMessage={errors.email}
+                {...formik.getFieldProps("email")}
+                isInvalid={formik.touched.email && Boolean(formik.errors.email)}
+                errorMessage={formik.errors.email}
               />
               <Input
                 placeholder="Password"
                 size="lg"
                 type="password"
-                {...getFieldProps("password")}
-                isInvalid={touched.password && errors.password ? true : false}
-                errorMessage={errors.password}
+                {...formik.getFieldProps("password")}
+                isInvalid={
+                  formik.touched.password && Boolean(formik.errors.password)
+                }
+                errorMessage={formik.errors.password}
               />
-              {error && (
-                <p className="text-danger text-sm font-medium px-2">{error}</p>
+              {loadingState.error && (
+                <p className="text-danger text-sm font-medium px-2">
+                  {loadingState.error}
+                </p>
               )}
               {unverifiedEmail && (
                 <Button
@@ -248,15 +259,18 @@ export default function SigninModal({ isOpen, onClose, onSignupSuccess }: P) {
                   Resend Verification Email
                 </Button>
               )}
-              <Button size="lg" color="primary" type="submit" isLoading={loading}>
+              <Button
+                size="lg"
+                color="primary"
+                type="submit"
+                isLoading={loadingState.loading}
+              >
                 {selectedKey === "login" ? "Let's Go" : "Join Now"}
               </Button>
             </form>
           </ModalBody>
         </ModalContent>
       </Modal>
-
-      {/* Verification Modal */}
       {showVerificationModal && (
         <Modal
           isOpen={showVerificationModal}
@@ -269,10 +283,17 @@ export default function SigninModal({ isOpen, onClose, onSignupSuccess }: P) {
               <h2 className="text-3xl font-bold">Verify your email address</h2>
             </ModalHeader>
             <ModalBody>
-              <p>Please check your email and click the verification link to activate your account.</p>
+              <p>
+                Please check your email and click the verification link to
+                activate your account.
+              </p>
             </ModalBody>
             <ModalFooter>
-              <Button size="lg" color="primary" onClick={() => window.open("https://mail.google.com", "_blank")}>
+              <Button
+                size="lg"
+                color="primary"
+                onClick={() => window.open("https://mail.google.com", "_blank")}
+              >
                 Open Email
               </Button>
             </ModalFooter>
@@ -281,4 +302,6 @@ export default function SigninModal({ isOpen, onClose, onSignupSuccess }: P) {
       )}
     </>
   );
-}
+};
+
+export default SigninModal;
